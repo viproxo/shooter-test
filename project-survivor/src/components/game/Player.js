@@ -8,8 +8,8 @@ const Player = ({ size, position }) => {
     height: size,
     backgroundColor: 'blue', // Player color
     borderRadius: size / 2, // Make it a circle
-    left: position.x - size / 2, // Adjust for center origin
-    top: position.y - size / 2,  // Adjust for center origin
+    left: (position ? position.x : 0) - size / 2, // Adjust for center origin
+    top: (position ? position.y : 0) - size / 2,  // Adjust for center origin
   };
 
   return <View style={style} />;

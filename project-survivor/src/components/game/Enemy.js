@@ -8,8 +8,8 @@ const Enemy = ({ size, position, color = 'red' }) => { // Default color red
     height: size,
     backgroundColor: color,
     // borderRadius: size / 2, // Uncomment for circular enemies
-    left: position.x - size / 2, // Adjust for center origin
-    top: position.y - size / 2,  // Adjust for center origin
+    left: (position ? position.x : 0) - size / 2, // Adjust for center origin
+    top: (position ? position.y : 0) - size / 2,  // Adjust for center origin
   };
 
   return <View style={style} />;

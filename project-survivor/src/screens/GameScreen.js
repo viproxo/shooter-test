@@ -18,25 +18,77 @@ const screenWidth = Dimensions.get('window').width;
 const screenHeight = Dimensions.get('window').height;
 const PLAYER_SIZE = 50;
 
+// physicsEngine and physicsWorld are defined outside as module singletons
 const physicsEngine = Matter.Engine.create({ gravity: { x: 0, y: 0 } });
 const physicsWorld = physicsEngine.world;
+
+// Function to create initial entities, including a new player body
+const createInitialEntities = () => {
+  // Note: Matter.World.clear should be called before this in a reset sequence.
+  const playerX = screenWidth / 2;
+  const playerY = screenHeight / 2;
+
+  const newPlayerBody = Matter.Bodies.circle(
+    playerX,
+    playerY,
+    PLAYER_SIZE / 2,
+    { label: 'player', isStatic: false, frictionAir: 0.05 }
+  );
+  Matter.World.add(physicsWorld, [newPlayerBody]); // Add new player body to the world
+
+  return {
+    physics: {
+      engine: physicsEngine,
+      world: physicsWorld,
+    },
+    player: {
+      body: newPlayerBody,
+      size: PLAYER_SIZE,
+      renderer: <Player />,
+      position: { x: playerX, y: playerY },
+    },
+    gameTimer: { accumulatedDelta: 0 },
+  };
+};
+
 
 const GameScreen = () => {
   const {
     isPaused,
     isGameOver,
-    playerHP, // Still used for conditional rendering text, though playerWon is primary
-    playerWon, // For victory/defeat message
-    // gameTime, // Not directly used in render, but HUD uses it
+    playerHP,
+    playerWon,
     setJoystickVector,
-    // takeDamage, // Used by events
-    // addXP, // Used by events
+    takeDamage,
+    addXP,
     availableSkillsForLevelUp,
     setAvailableSkills,
     activeWeapons,
     passiveSkills,
-    resetGame, // For Play Again button
+    resetGame: resetGameStore, // Renamed from store
   } = useGameStore();
+
+  const [gameKey, setGameKey] = React.useState(0);
+  const [entities, setEntities] = React.useState(createInitialEntities);
+
+  React.useEffect(() => {
+    // This effect handles the actual game reset logic when isGameOver changes from true to false
+    // (which happens after resetGameStore is called and store is reset)
+    // It also ensures initial setup of the world is clean if gameKey is 0 (initial mount)
+    if (gameKey > 0 || (gameKey === 0 && !isGameOver)) { // gameKey > 0 for reset, or initial setup
+      Matter.World.clear(physicsWorld, false); // false to keep static bodies if any
+      Matter.Engine.clear(physicsEngine);
+      // Note: createInitialEntities will re-add player body
+      setEntities(createInitialEntities());
+    }
+  }, [gameKey]); // Rerun when gameKey changes (due to reset)
+
+
+  const handleActualReset = () => {
+    resetGameStore(); // Reset Zustand store first
+    setGameKey(prevKey => prevKey + 1); // Increment key to trigger re-mount of GameEngine and re-init of entities
+  };
+
 
   React.useEffect(() => {
     // This effect runs when isPaused changes, specifically for level-up skill selection.
@@ -78,50 +130,25 @@ const GameScreen = () => {
     }
   }, [isPaused, availableSkillsForLevelUp, isGameOver, setAvailableSkills, activeWeapons, passiveSkills]);
 
-  const playerBody = Matter.Bodies.circle(
-    screenWidth / 2,
-    screenHeight / 2,
-    PLAYER_SIZE / 2,
-    { label: 'player', isStatic: false, frictionAir: 0.05 } // frictionAir helps with stopping
-  );
+  // The actual playerBody and initialEntities are now managed by useState and createInitialEntities.
+  // Matter.World.add for playerBody is handled within createInitialEntities.
 
-  const initialEntities = {
-    physics: {
-      engine: physicsEngine,
-      world: physicsWorld,
-    },
-    player: {
-      body: playerBody, // Matter.js body
-      size: PLAYER_SIZE,
-      renderer: <Player />,
-      // position: { x: screenWidth / 2, y: screenHeight / 2 }, // Now derived from body
-    },
-    // Spawner entity will be initialized by the spawnerSystem itself
-  };
-  Matter.World.add(physicsWorld, [playerBody]);
+  const gameSystems = React.useMemo(() => [
+    movementSystem, spawnerSystem, physicsSystem, attacksSystem, timerSystem
+  ], []);
 
-  // Local entities reference for onGameEngineEvent closure.
-  // This is tricky because systems modify the 'entities' object directly.
-  // The 'entities' object passed to onEvent by GameEngine is the current one.
-  let currentEntities = initialEntities;
+  const onGameEngineEvent = (eventArg, dispatchData) => {
+    const currentEntities = dispatchData.entities; // Use entities from GameEngine callback
+    if (!currentEntities) return;
 
-  const gameSystems = [movementSystem, spawnerSystem, physicsSystem, attacksSystem, timerSystem]; // Added timerSystem
 
-  const handleJoystickMove = (vector) => {
-    setJoystickVector(vector);
-  };
-
-  const onGameEngineEvent = (e, entitiesFromEngine) => {
-    // Use entitiesFromEngine for up-to-date entity states
-    if (!entitiesFromEngine) entitiesFromEngine = currentEntities; // Fallback, though GameEngine should provide it
-
-    if (e.type === 'player-hit-enemy') {
-      const enemyDetails = e.enemyDetails;
+    if (eventArg.type === 'player-hit-enemy') {
+      const enemyDetails = eventArg.enemyDetails;
       if (enemyDetails && enemyDetails.damage) {
         takeDamage(enemyDetails.damage);
       }
-    } else if (e.type === 'projectile-hit-enemy' || e.type === 'guardian-hit-enemy' || e.type === 'lightning-hit-enemy') {
-      const enemyEntity = entitiesFromEngine[e.enemyEntityId];
+    } else if (eventArg.type === 'projectile-hit-enemy' || eventArg.type === 'guardian-hit-enemy' || eventArg.type === 'lightning-hit-enemy') {
+      const enemyEntity = currentEntities[eventArg.enemyEntityId];
       let damageDealt = 0;
       let projectileToRemove = null; // For pistol projectiles
 
@@ -169,11 +196,11 @@ const GameScreen = () => {
         style={styles.gameContainer}
         running={!isPaused && !isGameOver && availableSkillsForLevelUp.length === 0} // Also pause engine if modal is up
         systems={gameSystems}
-        entities={initialEntities}
-        onEvent={(e) => onGameEngineEvent(e, initialEntities)}
+        entities={entities} // Use state for entities
+        onEvent={onGameEngineEvent} // GameEngine provides entities in the second arg of event handler
       />
       <GameHUD />
-      <Joystick onMove={handleJoystickMove} />
+      <Joystick onMove={setJoystickVector} /> {/* Directly use setJoystickVector from store */}
 
       {/* Skill Choice Modal */}
       {isPaused && availableSkillsForLevelUp.length > 0 && !isGameOver && <SkillChoiceModal />}
@@ -188,7 +215,7 @@ const GameScreen = () => {
           {/* Display score and time if needed */}
           {/* <Text style={styles.finalScoreText}>Time: {gameTime}</Text> */}
           {/* <Text style={styles.finalScoreText}>Score: {score}</Text> */}
-          <TouchableOpacity style={styles.playAgainButton} onPress={resetGame}>
+          <TouchableOpacity style={styles.playAgainButton} onPress={handleActualReset}>
             <Text style={styles.playAgainButtonText}>Play Again?</Text>
           </TouchableOpacity>
         </View>
