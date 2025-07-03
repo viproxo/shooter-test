@@ -61,11 +61,11 @@ const GameScreen = () => {
     setJoystickVector,
     takeDamage,
     addXP,
-    availableSkillsForLevelUp,
+    availableSkillsForLevelUp = [], // Default to empty array
     setAvailableSkills,
     activeWeapons,
     passiveSkills,
-    resetGame: resetGameStore, // Renamed from store
+    resetGame: resetGameStore,
   } = useGameStore();
 
   const [gameKey, setGameKey] = React.useState(0);
@@ -137,50 +137,52 @@ const GameScreen = () => {
     movementSystem, spawnerSystem, physicsSystem, attacksSystem, timerSystem
   ], []);
 
-  const onGameEngineEvent = (eventArg, dispatchData) => {
-    const currentEntities = dispatchData.entities; // Use entities from GameEngine callback
-    if (!currentEntities) return;
+  // onEvent handler now uses 'entities' from GameScreen's state
+  const onGameEngineEvent = (eventArg) => {
+    if (!eventArg || !eventArg.type) return;
 
-
+    // Use 'entities' from GameScreen's state directly
     if (eventArg.type === 'player-hit-enemy') {
       const enemyDetails = eventArg.enemyDetails;
       if (enemyDetails && enemyDetails.damage) {
         takeDamage(enemyDetails.damage);
       }
     } else if (eventArg.type === 'projectile-hit-enemy' || eventArg.type === 'guardian-hit-enemy' || eventArg.type === 'lightning-hit-enemy') {
-      const enemyEntity = currentEntities[eventArg.enemyEntityId];
+      const enemyEntity = entities[eventArg.enemyEntityId]; // Use 'entities' from state
       let damageDealt = 0;
-      let projectileToRemove = null; // For pistol projectiles
+      let projectileToRemove = null;
 
-      if (!enemyEntity || !enemyEntity.details) return; // Enemy already gone or no details
+      if (!enemyEntity || !enemyEntity.details) return;
 
-      if (e.type === 'projectile-hit-enemy') {
-        const projectileEntity = entitiesFromEngine[e.projectileEntityId];
+      if (eventArg.type === 'projectile-hit-enemy') { // Corrected: eventArg.type
+        const projectileEntity = entities[eventArg.projectileEntityId]; // Use 'entities' from state
         if (projectileEntity && projectileEntity.damage) {
           damageDealt = projectileEntity.damage;
-          projectileToRemove = projectileEntity;
+          projectileToRemove = projectileEntity; // Storing the entity to get its body
         }
-      } else if (e.type === 'guardian-hit-enemy') {
-        const orbEntity = entitiesFromEngine[e.orbEntityId];
+      } else if (eventArg.type === 'guardian-hit-enemy') { // Corrected: eventArg.type
+        const orbEntity = entities[eventArg.orbEntityId]; // Use 'entities' from state
         if (orbEntity && orbEntity.damage) {
           damageDealt = orbEntity.damage;
         }
-      } else if (e.type === 'lightning-hit-enemy') { // Event from lightning system
-        damageDealt = e.damage || 0;
+      } else if (eventArg.type === 'lightning-hit-enemy') { // Corrected: eventArg.type
+        damageDealt = eventArg.damage || 0;
       }
 
       if (damageDealt > 0) {
         enemyEntity.details.hp -= damageDealt;
       }
 
-      if (projectileToRemove) {
+      if (projectileToRemove && projectileToRemove.body) { // Check if body exists
         Matter.World.remove(physicsWorld, projectileToRemove.body);
-        delete entitiesFromEngine[e.projectileEntityId];
+        delete entities[eventArg.projectileEntityId]; // Use 'entities' from state
       }
 
       if (enemyEntity.details.hp <= 0) {
-        Matter.World.remove(physicsWorld, enemyEntity.body); // Ensure body is removed
-        delete entitiesFromEngine[e.enemyEntityId];
+        if (enemyEntity.body) { // Check if body exists before removing
+            Matter.World.remove(physicsWorld, enemyEntity.body);
+        }
+        delete entities[eventArg.enemyEntityId]; // Use 'entities' from state
         addXP(enemyEntity.details.xpValue || 10);
       }
     }
@@ -203,8 +205,6 @@ const GameScreen = () => {
       <Joystick onMove={setJoystickVector} /> {/* Directly use setJoystickVector from store */}
 
       {/* Skill Choice Modal */}
-      {isPaused && availableSkillsForLevelUp.length > 0 && !isGameOver && <SkillChoiceModal />}
-
       {isPaused && availableSkillsForLevelUp.length > 0 && !isGameOver && <SkillChoiceModal />}
 
       {isGameOver && (
